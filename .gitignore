@@ -1,0 +1,11 @@
+raw_data/
+processed_data/
+outputs/
+datasets/
+venv/
+pycache/
+*.SAFE
+*.zip
+*.npy
+*.pth
+*.pt

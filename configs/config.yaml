@@ -1,0 +1,97 @@
+project:
+  name: methanesat_2026_sentinel2_pipeline
+  seed: 42
+  device: auto
+
+paths:
+  raw_data: raw_data
+  processed_data: processed_data
+  datasets: datasets
+  outputs: outputs
+  logs: logs
+
+ingestion:
+  provider: sentinel_hub
+  level: L1C
+  batch_size: 8
+  max_retries: 3
+  retry_backoff_seconds: 5
+  bands:
+    required: [B11, B12]
+    optional_rgb: [B04, B03, B02]
+  query:
+    region_id: example_region
+    bbox: [-118.7, 34.0, -118.0, 34.5]
+    date_start: "2026-01-01"
+    date_end: "2026-01-31"
+    max_cloud_coverage: 20
+
+preprocessing:
+  target_resolution_m: 20
+  patch_size: 128
+  channels: 20
+  temporal_pairing:
+    enabled: true
+    max_days_between_observations: 16
+  normalization:
+    method: robust_percentile
+    lower_percentile: 2
+    upper_percentile: 98
+  output_formats: [hdf5, numpy, zarr]
+
+vegetation_pipeline:
+  raw_data: raw_data
+  output_dir: outputs/vegetation
+  reflectance_scale: 10000
+  max_preview_size: 2048
+  stress_classes:
+    stressed_or_non_vegetated: 0
+    moderate: 1
+    healthy: 2
+    nodata: 255
+
+temporal_alignment:
+  max_time_delta_hours: 384
+  nearest_timestamp: true
+  enable_weather_sync: true
+  weather_source: placeholder
+
+feature_engineering:
+  include_band_ratios: true
+  include_temporal_differences: true
+  include_texture: true
+  include_masks: true
+  swir_indices:
+    - name: swir_ratio_b12_b11
+      numerator: B12
+      denominator: B11
+
+dataset:
+  split_strategy: geographic
+  train_fraction: 0.7
+  val_fraction: 0.15
+  test_fraction: 0.15
+  hdf5_path: datasets/methane_patches.h5
+  tensor_key: x
+  label_key: y
+
+model:
+  architecture: vit_unet
+  in_channels: 20
+  out_channels: 1
+  base_channels: 32
+  encoder_name: vit_base_patch16_224
+  pretrained: false
+  multi_temporal: true
+
+training:
+  epochs: 5
+  batch_size: 4
+  learning_rate: 0.0001
+  num_workers: 2
+  mixed_precision: true
+  checkpoint_dir: outputs/checkpoints
+
+visualization:
+  confidence_threshold: 0.5
+  plume_colormap: inferno
