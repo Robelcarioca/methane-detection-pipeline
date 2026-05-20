@@ -172,6 +172,64 @@ def evaluate_batch(y_true_batch: np.ndarray, p_pred_batch: np.ndarray, threshold
         "empty_frames_count": len(empty_frame_false_positive_rates)
     }
 
+def find_optimal_threshold(y_true_batch: np.ndarray, p_pred_batch: np.ndarray, 
+                           thresholds: list = None) -> dict:
+    """
+    Sweeps through a range of probability thresholds to find the optimal cutoff 
+    for methane plume segmentation. Optimizes for the Micro-Dice Coefficient.
+    
+    Args:
+        y_true_batch: Ground truth binary masks, shape (B, H, W)
+        p_pred_batch: Model probability outputs (0 to 1), shape (B, H, W)
+        thresholds: List of thresholds to test. Defaults to 0.1 -> 0.9
+    """
+    if thresholds is None:
+        # Test thresholds from 0.1 to 0.9 in increments of 0.05
+        thresholds = np.arange(0.1, 0.95, 0.05)
+        
+    y_true_batch = np.asarray(y_true_batch, dtype=bool)
+    
+    best_threshold = 0.5
+    best_dice = -1.0
+    sweep_log = []
+    
+    for t in thresholds:
+        # Binarize the entire batch at the current threshold 't'
+        y_pred_bin = (p_pred_batch >= t).astype(bool)
+        
+        # Calculate Micro-Dice (aggregating all pixels before division)
+        # This prevents empty 128x128 patches from heavily skewing the average
+        intersection = np.logical_and(y_true_batch, y_pred_bin).sum()
+        total_pixels = y_true_batch.sum() + y_pred_bin.sum()
+        
+        if total_pixels == 0:
+            dice = 1.0
+        else:
+            dice = (2. * intersection) / total_pixels
+            
+        # Calculate Micro-FDR for context
+        false_positives = np.logical_and(np.logical_not(y_true_batch), y_pred_bin).sum()
+        total_predicted_positive = false_positives + intersection
+        
+        fdr = false_positives / total_predicted_positive if total_predicted_positive > 0 else 0.0
+        
+        sweep_log.append({
+            "threshold": float(t),
+            "dice": float(dice),
+            "fdr": float(fdr)
+        })
+        
+        # Track the best performing threshold
+        if dice > best_dice:
+            best_dice = dice
+            best_threshold = t
+            
+    return {
+        "optimal_threshold": float(best_threshold),
+        "max_dice_score": float(best_dice),
+        "detailed_sweep": sweep_log
+    }
+
 if __name__ == "__main__":
     import numpy as np
     from scipy.ndimage import label
@@ -233,3 +291,16 @@ if __name__ == "__main__":
     
     for key, value in object_results.items():
         print(f"{key:25s}: {value:.4f}")
+
+    # --- RUN THE THRESHOLD SWEEPER ---
+    print("\n--- Running Threshold Calibration ---")
+    calibration_results = find_optimal_threshold(y_true_batch, p_pred_batch)
+    
+    print(f"Optimal Threshold Found: {calibration_results['optimal_threshold']:.2f}")
+    print(f"Maximum Dice Score:      {calibration_results['max_dice_score']:.4f}")
+    print("\nTop 3 Thresholds Evaluated:")
+    
+    # Sort the sweep log by dice score descending and print the top 3
+    top_3 = sorted(calibration_results['detailed_sweep'], key=lambda x: x['dice'], reverse=True)[:3]
+    for res in top_3:
+        print(f"Threshold: {res['threshold']:.2f} | Dice: {res['dice']:.4f} | FDR: {res['fdr']:.4f}")
